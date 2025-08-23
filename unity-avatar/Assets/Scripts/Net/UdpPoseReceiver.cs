@@ -14,6 +14,10 @@ public class UdpPoseReceiver : MonoBehaviour
     [Header("Scene")]
     public RandomAvatarSpawner spawner;
 
+    [Header("Incoming Basis Offset (deg)")]
+    [Tooltip("Final correction after CV->Unity. Adjust if the avatar looks pitched/yawed/rolled.")]
+    public Vector3 rotationOffsetEuler = new Vector3(-90f, 0f, 0f); // <- fixes 'head down'
+
     UdpClient _client;
     Thread _thread;
     volatile bool _running;
@@ -22,6 +26,7 @@ public class UdpPoseReceiver : MonoBehaviour
     readonly object _lock = new object();
 
     string _lastGender = "unknown";
+    string _spawnedGender = null;
 
     void Start()
     {
@@ -61,10 +66,7 @@ public class UdpPoseReceiver : MonoBehaviour
         while (true)
         {
             string msg = null;
-            lock (_lock)
-            {
-                if (_queue.Count > 0) msg = _queue.Dequeue();
-            }
+            lock (_lock) { if (_queue.Count > 0) msg = _queue.Dequeue(); }
             if (msg == null) break;
 
             try { ProcessJson(msg); }
@@ -76,13 +78,15 @@ public class UdpPoseReceiver : MonoBehaviour
 
     static Vector3 CvToUnity(Vector3 v) => new Vector3(v.x, -v.y, -v.z);
 
-    static Dictionary<string, float[]> ConvertAllCvToUnity(Dictionary<string, float[]> src)
+    Dictionary<string, float[]> ConvertAll(Dictionary<string, float[]> src)
     {
+        var rot = Quaternion.Euler(rotationOffsetEuler);
         var dst = new Dictionary<string, float[]>(src.Count);
         foreach (var kv in src)
         {
             var a = kv.Value;
             var u = CvToUnity(new Vector3(a[0], a[1], a[2]));
+            u = rot * u; // apply final basis correction
             dst[kv.Key] = new float[] { u.x, u.y, u.z };
         }
         return dst;
@@ -114,25 +118,39 @@ public class UdpPoseReceiver : MonoBehaviour
             }
         }
 
-        // Event-based spawn/despawn
+        // Spawn/despawn from event
         if (!string.IsNullOrEmpty(e))
         {
-            if (e == "enter" || e == "entered") spawner.SpawnNew(_lastGender);
-            else if (e == "exit" || e == "left") spawner.Despawn();
+            if (e == "enter" || e == "entered") SpawnIfNeeded(_lastGender, force: true);
+            else if (e == "exit" || e == "left") { spawner.Despawn(); _spawnedGender = null; }
         }
 
-        // Safety: if bones arrive but nothing spawned yet, auto-spawn once.
-        if (bones.Count > 0 && !spawner.HasAvatar)
-        {
-            spawner.SpawnNew(_lastGender);
-        }
+        // Safety: spawn on first bones if nothing spawned
+        if (bones.Count > 0) SpawnIfNeeded(_lastGender, force: false);
 
         if (bones.Count > 0)
-            spawner.ApplyBones(ConvertAllCvToUnity(bones));
+            spawner.ApplyBones(ConvertAll(bones));
     }
 
-    // -------------------- MiniJSON (single-file) --------------------
-    // Permissive tiny JSON parser (objects, arrays, numbers, strings, true/false/null)
+    void SpawnIfNeeded(string gender, bool force)
+    {
+        // respawn if gender changed
+        if (!spawner.HasAvatar || force || (_spawnedGender != null && _spawnedGender != GenderKey(gender)))
+        {
+            spawner.SpawnNew(gender);
+            _spawnedGender = GenderKey(gender);
+        }
+    }
+
+    static string GenderKey(string g)
+    {
+        g = (g ?? "unknown").Trim().ToLowerInvariant();
+        if (g.StartsWith("f")) return "female";
+        if (g.StartsWith("m")) return "male";
+        return "unknown";
+    }
+
+    // -------- MiniJSON (tiny, no dependencies) --------
     static class MiniJSON
     {
         public static class Json
@@ -143,66 +161,34 @@ public class UdpPoseReceiver : MonoBehaviour
             {
                 const string WORD_BREAK = "{}[],:\"";
                 StringReader json;
-
-                Parser(string jsonString) { json = new StringReader(jsonString); }
-
-                public static object Parse(string jsonString)
-                {
-                    using (var instance = new Parser(jsonString))
-                        return instance.ParseValue();
-                }
-
+                Parser(string s) { json = new StringReader(s); }
+                public static object Parse(string s) { using (var p = new Parser(s)) return p.ParseValue(); }
                 public void Dispose() { json.Dispose(); }
 
                 Dictionary<string, object> ParseObject()
                 {
                     var table = new Dictionary<string, object>();
-                    json.Read(); // {
-
+                    json.Read();
                     while (true)
                     {
-                        var next = NextToken;
-                        if (next == TOKEN.CURLY_CLOSE) { json.Read(); return table; }
-                        if (next == TOKEN.NONE) return null;
-
+                        var t = NextToken;
+                        if (t == TOKEN.CURLY_CLOSE) { json.Read(); return table; }
+                        if (t == TOKEN.NONE) return null;
                         var name = ParseString();
-                        if (NextToken != TOKEN.COLON) return null;
-                        json.Read(); // :
-
+                        if (NextToken != TOKEN.COLON) return null; json.Read();
                         table[name] = ParseValue();
-
-                        switch (NextToken)
-                        {
-                            case TOKEN.COMMA: json.Read(); continue;
-                            case TOKEN.CURLY_CLOSE: json.Read(); return table;
-                            default: return null;
-                        }
+                        switch (NextToken) { case TOKEN.COMMA: json.Read(); continue; case TOKEN.CURLY_CLOSE: json.Read(); return table; default: return null; }
                     }
                 }
 
                 List<object> ParseArray()
                 {
-                    var array = new List<object>();
-                    json.Read(); // [
-
+                    var a = new List<object>(); json.Read();
                     while (true)
                     {
-                        var nextToken = NextToken;
-                        switch (nextToken)
-                        {
-                            case TOKEN.NONE: return null;
-                            case TOKEN.SQUARE_CLOSE: json.Read(); return array;
-                            default:
-                                array.Add(ParseValue());
-                                break;
-                        }
-
-                        switch (NextToken)
-                        {
-                            case TOKEN.COMMA: json.Read(); break;
-                            case TOKEN.SQUARE_CLOSE: json.Read(); return array;
-                            default: return null;
-                        }
+                        var t = NextToken;
+                        switch (t) { case TOKEN.NONE: return null; case TOKEN.SQUARE_CLOSE: json.Read(); return a; default: a.Add(ParseValue()); break; }
+                        switch (NextToken) { case TOKEN.COMMA: json.Read(); break; case TOKEN.SQUARE_CLOSE: json.Read(); return a; default: return null; }
                     }
                 }
 
@@ -217,23 +203,20 @@ public class UdpPoseReceiver : MonoBehaviour
                         case TOKEN.TRUE: json.Read(); json.Read(); json.Read(); json.Read(); return true;
                         case TOKEN.FALSE: json.Read(); json.Read(); json.Read(); json.Read(); json.Read(); return false;
                         case TOKEN.NULL: json.Read(); json.Read(); json.Read(); json.Read(); return null;
-                        case TOKEN.NONE: default: return null;
+                        default: return null;
                     }
                 }
 
                 string ParseString()
                 {
-                    var s = new System.Text.StringBuilder();
-                    json.Read(); // "
+                    var s = new System.Text.StringBuilder(); json.Read();
                     while (true)
                     {
-                        if (json.Peek() == -1) break;
-                        var c = (char)json.Read();
+                        if (json.Peek() == -1) break; var c = (char)json.Read();
                         if (c == '"') break;
                         if (c == '\\')
                         {
-                            if (json.Peek() == -1) break;
-                            c = (char)json.Read();
+                            if (json.Peek() == -1) break; c = (char)json.Read();
                             switch (c)
                             {
                                 case '"': case '\\': case '/': s.Append(c); break;
@@ -242,11 +225,7 @@ public class UdpPoseReceiver : MonoBehaviour
                                 case 'n': s.Append('\n'); break;
                                 case 'r': s.Append('\r'); break;
                                 case 't': s.Append('\t'); break;
-                                case 'u':
-                                    var hex = new char[4];
-                                    json.Read(hex, 0, 4);
-                                    s.Append((char)Convert.ToInt32(new string(hex), 16));
-                                    break;
+                                case 'u': var hex = new char[4]; json.Read(hex, 0, 4); s.Append((char)Convert.ToInt32(new string(hex), 16)); break;
                             }
                         }
                         else s.Append(c);
@@ -256,86 +235,37 @@ public class UdpPoseReceiver : MonoBehaviour
 
                 object ParseNumber()
                 {
-                    var number = NextWord;
-                    if (number.IndexOf('.') == -1 && number.IndexOf('e') == -1 && number.IndexOf('E') == -1)
-                        return long.Parse(number, System.Globalization.CultureInfo.InvariantCulture);
-                    return double.Parse(number, System.Globalization.CultureInfo.InvariantCulture);
+                    var n = NextWord;
+                    if (n.IndexOf('.') == -1 && n.IndexOf('e') == -1 && n.IndexOf('E') == -1)
+                        return long.Parse(n, System.Globalization.CultureInfo.InvariantCulture);
+                    return double.Parse(n, System.Globalization.CultureInfo.InvariantCulture);
                 }
 
-                void EatWhitespace()
-                {
-                    while (json.Peek() != -1 && char.IsWhiteSpace((char)json.Peek())) json.Read();
-                }
-
+                void EatWS() { while (json.Peek() != -1 && char.IsWhiteSpace((char)json.Peek())) json.Read(); }
                 char PeekChar { get { return Convert.ToChar(json.Peek()); } }
                 char NextChar { get { return Convert.ToChar(json.Read()); } }
-                string NextWord
-                {
-                    get
-                    {
-                        var sb = new System.Text.StringBuilder();
-                        while (json.Peek() != -1 && WORD_BREAK.IndexOf(PeekChar) == -1 && !char.IsWhiteSpace(PeekChar))
-                            sb.Append(NextChar);
-                        return sb.ToString();
-                    }
-                }
-
+                string NextWord { get { var sb = new System.Text.StringBuilder(); while (json.Peek() != -1 && "{}[],:\"".IndexOf(PeekChar) == -1 && !char.IsWhiteSpace(PeekChar)) sb.Append(NextChar); return sb.ToString(); } }
                 TOKEN NextToken
                 {
                     get
                     {
-                        EatWhitespace();
-                        if (json.Peek() == -1) return TOKEN.NONE;
+                        EatWS(); if (json.Peek() == -1) return TOKEN.NONE;
                         switch (PeekChar)
-                        {
-                            case '{': return TOKEN.CURLY_OPEN;
-                            case '}': return TOKEN.CURLY_CLOSE;
-                            case '[': return TOKEN.SQUARE_OPEN;
-                            case ']': return TOKEN.SQUARE_CLOSE;
-                            case ',': return TOKEN.COMMA;
-                            case '"': return TOKEN.STRING;
-                            case ':': return TOKEN.COLON;
-                            case '0':
-                            case '1':
-                            case '2':
-                            case '3':
-                            case '4':
-                            case '5':
-                            case '6':
-                            case '7':
-                            case '8':
-                            case '9':
-                            case '-': return TOKEN.NUMBER;
-                        }
-                        var word = NextWord;
-                        switch (word)
-                        {
-                            case "true": return TOKEN.TRUE;
-                            case "false": return TOKEN.FALSE;
-                            case "null": return TOKEN.NULL;
-                        }
+                        { case '{': return TOKEN.CURLY_OPEN; case '}': return TOKEN.CURLY_CLOSE; case '[': return TOKEN.SQUARE_OPEN; case ']': return TOKEN.SQUARE_CLOSE; case ',': return TOKEN.COMMA; case '"': return TOKEN.STRING; case ':': return TOKEN.COLON; case '0': case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9': case '-': return TOKEN.NUMBER; }
+                        var w = NextWord; switch (w) { case "true": return TOKEN.TRUE; case "false": return TOKEN.FALSE; case "null": return TOKEN.NULL; }
                         return TOKEN.NONE;
                     }
                 }
-
-                enum TOKEN
-                {
-                    NONE, CURLY_OPEN, CURLY_CLOSE, SQUARE_OPEN, SQUARE_CLOSE,
-                    COLON, COMMA, STRING, NUMBER, TRUE, FALSE, NULL
-                }
+                enum TOKEN { NONE, CURLY_OPEN, CURLY_CLOSE, SQUARE_OPEN, SQUARE_CLOSE, COLON, COMMA, STRING, NUMBER, TRUE, FALSE, NULL }
             }
 
             sealed class StringReader : IDisposable
             {
-                readonly string s;
-                int idx;
-                public StringReader(string str) { s = str; idx = 0; }
-                public int Peek() { return (idx < s.Length) ? s[idx] : -1; }
-                public int Read() { return (idx < s.Length) ? s[idx++] : -1; }
-                public void Read(char[] buf, int off, int len)
-                {
-                    for (int i = 0; i < len; i++) buf[off + i] = (char)Read();
-                }
+                readonly string s; int i;
+                public StringReader(string str) { s = str; i = 0; }
+                public int Peek() { return (i < s.Length) ? s[i] : -1; }
+                public int Read() { return (i < s.Length) ? s[i++] : -1; }
+                public void Read(char[] buf, int off, int len) { for (int k = 0; k < len; k++) buf[off + k] = (char)Read(); }
                 public void Dispose() { }
             }
         }

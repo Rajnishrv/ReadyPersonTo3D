@@ -42,8 +42,11 @@ def main():
     global last_gender_ts
 
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+    # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 580)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 320)
     # Reduce capture latency (most backends ignore this, but cheap when supported)
     cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 

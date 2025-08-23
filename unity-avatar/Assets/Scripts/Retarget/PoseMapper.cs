@@ -36,12 +36,12 @@ public class PoseMapper
         return _lp[key].Step(v);
     }
 
-    static void RotateTowardWorldDir(Transform tr, Vector3 worldDir, float slerp = 0.7f, Vector3 localAxis = default)
+    static void RotateTowardWorldDir(Transform tr, Vector3 worldDir, float slerp = 0.75f, Vector3 localAxis = default)
     {
         if (!tr) return;
         if (worldDir.sqrMagnitude < 1e-6f) return;
 
-        if (localAxis == default) localAxis = Vector3.forward; // change to Vector3.right if your rig uses +X
+        if (localAxis == default) localAxis = Vector3.right; // <- MIXAMO/RPM use +X
         var currentAxisWS = tr.TransformDirection(localAxis);
         var delta = Quaternion.FromToRotation(currentAxisWS, worldDir.normalized);
         var targetWorld = delta * tr.rotation;
@@ -68,17 +68,17 @@ public class PoseMapper
             {
                 var up = (chestUp != Vector3.zero) ? chestUp.normalized : Vector3.up;
                 var target = Quaternion.LookRotation(chestFwd.normalized, up);
-                chest.rotation = Quaternion.Slerp(chest.rotation, target, 0.6f);
+                chest.rotation = Quaternion.Slerp(chest.rotation, target, 0.65f);
             }
         }
 
-        void Aim(HumanBodyBones bone, string key, Vector3 limbAxis = default)
+        void Aim(HumanBodyBones bone, string key)
         {
             if (_t.TryGetValue(bone, out var tr))
             {
                 var dir = LP(bone.ToString(), GetVec(bones, key));
                 if (dir != Vector3.zero)
-                    RotateTowardWorldDir(tr, dir, 0.7f, limbAxis);
+                    RotateTowardWorldDir(tr, dir, 0.8f, Vector3.right);
             }
         }
 

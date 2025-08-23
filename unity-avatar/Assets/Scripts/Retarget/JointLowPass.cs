@@ -6,10 +6,7 @@ public class JointLowPass
     Vector3 y;
     bool has;
 
-    public JointLowPass(float alpha = 0.5f)
-    {
-        this.alpha = Mathf.Clamp01(alpha);
-    }
+    public JointLowPass(float alpha = 0.5f) { this.alpha = Mathf.Clamp01(alpha); }
 
     public Vector3 Step(Vector3 x)
     {

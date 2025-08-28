@@ -1,18 +1,18 @@
 {
   "context": {
-    "projectPath": "C:/Users/rajni/OneDrive/Desktop/ReadyPersonTo3D/unity-avatar/Packages",
+    "projectPath": "C:/Users/rajni/OneDrive/Desktop/ReadyPersonTo3D - Copy/unity-avatar/Packages",
     "unityVersion": "6000.1.12f1"
   },
   "inputs": [
-    "C:\\Users\\rajni\\OneDrive\\Desktop\\ReadyPersonTo3D\\unity-avatar\\Packages\\manifest.json",
-    "C:\\Users\\rajni\\OneDrive\\Desktop\\ReadyPersonTo3D\\unity-avatar\\Packages\\packages-lock.json",
+    "C:\\Users\\rajni\\OneDrive\\Desktop\\ReadyPersonTo3D - Copy\\unity-avatar\\Packages\\manifest.json",
+    "C:\\Users\\rajni\\OneDrive\\Desktop\\ReadyPersonTo3D - Copy\\unity-avatar\\Packages\\packages-lock.json",
     "C:\\Program Files\\Unity\\Hub\\Editor\\6000.1.12f1\\Editor\\Data\\Resources\\PackageManager\\BuiltInPackages\\BuiltInPackagesCombined.sha1"
   ],
   "outputs": {
     "com.unity.multiplayer.center@1.0.0": {
       "name": "com.unity.multiplayer.center",
       "displayName": "Multiplayer Center",
-      "resolvedPath": "C:\\Users\\rajni\\OneDrive\\Desktop\\ReadyPersonTo3D\\unity-avatar\\Library\\PackageCache\\com.unity.multiplayer.center@f3fb577b3546",
+      "resolvedPath": "C:\\Users\\rajni\\OneDrive\\Desktop\\ReadyPersonTo3D - Copy\\unity-avatar\\Library\\PackageCache\\com.unity.multiplayer.center@f3fb577b3546",
       "fingerprint": "f3fb577b3546594b97b8cc34307cd621f60f1c73",
       "editorCompatibility": "6000.0.0a1",
       "version": "1.0.0",

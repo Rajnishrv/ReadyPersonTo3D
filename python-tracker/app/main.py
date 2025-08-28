@@ -1,103 +1,105 @@
-# main.py (snappy / non-blocking)
-import cv2, threading, time
+# main.py — low-latency pose + robust, non-blocking gender
+import cv2, threading, time, collections
 from mediapipe_pose import MPose
 from feature_utils import normalize_pose
 from smoothing import BoneSmoother
 from pose_sender import PoseSender
-from gender import GenderClassifier
 from person_gate import PersonGate
+from gender import GenderClassifier
 
-GENDER_COOLDOWN_SEC = 1.5  # run gender at most this often
+# --------- Tuning ---------
+MODEL_COMPLEXITY = 0          # fast & stable
+SMOOTH_BETA = 0.65
+GENDER_INTERVAL_SEC = 3.0     # run gender every N seconds (background)
+CONSENSUS_WINDOW = 7          # frames of gender votes to consider
+CONSENSUS_MIN_AGREE = 4       # votes needed to flip label
 
-gender_cache = "unknown"
-gender_lock = threading.Lock()
-gender_busy = threading.Event()     # indicates a gender job is running
-last_gender_ts = 0.0
+# --------- Background gender worker ---------
+class GenderWorker:
+    def __init__(self):
+        self.gc = GenderClassifier()
+        self.raw = "unknown"
+        self._busy = threading.Event()
+        self._last_ts = 0.0
 
-def _quick_center_crop(frame, target_w=320):
-    h, w = frame.shape[:2]
-    # light, safe center crop; you can replace with a real face ROI if available
-    side = int(min(h, w) * 0.6)
-    cy, cx = h // 2, w // 2
-    y0, y1 = max(0, cy - side//2), min(h, cy + side//2)
-    x0, x1 = max(0, cx - side//2), min(w, cx + side//2)
-    crop = frame[y0:y1, x0:x1]
-    if crop.shape[1] > 0:
-        scale = target_w / float(crop.shape[1])
-        crop = cv2.resize(crop, (target_w, int(crop.shape[0]*scale)), interpolation=cv2.INTER_AREA)
-    return crop
+    def maybe_kick(self, frame_bgr, landmarks, interval_sec=GENDER_INTERVAL_SEC):
+        now = time.time()
+        if self._busy.is_set(): return
+        if now - self._last_ts < interval_sec: return
+        self._busy.set()
+        threading.Thread(target=self._run, args=(frame_bgr.copy(), landmarks), daemon=True).start()
 
-def gender_worker(gc, frame_bgr):
-    global gender_cache, last_gender_ts
-    try:
-        crop = _quick_center_crop(frame_bgr, 320)
-        label = gc.predict(crop)  # non-blocking for the main loop
-        with gender_lock:
-            gender_cache = label
-            last_gender_ts = time.time()
-    finally:
-        gender_busy.clear()
+    def _run(self, frame_bgr, landmarks):
+        try:
+            self.raw = self.gc.predict(frame_bgr, landmarks=landmarks) or "unknown"
+            self._last_ts = time.time()
+        except Exception:
+            self.raw = "unknown"
+        finally:
+            self._busy.clear()
+
+class GenderConsensus:
+    def __init__(self, window=CONSENSUS_WINDOW, min_agree=CONSENSUS_MIN_AGREE):
+        self.buf = collections.deque(maxlen=window)
+        self.min_agree = int(min_agree)
+        self.current = "unknown"
+    def update(self, raw_label: str) -> str:
+        lab = (raw_label or "unknown").lower()
+        self.buf.append(lab)
+        male = sum(1 for x in self.buf if x == "male")
+        fem  = sum(1 for x in self.buf if x == "female")
+        cand = None
+        if male >= self.min_agree: cand = "male"
+        if fem  >= self.min_agree and fem >= male: cand = "female"
+        if cand and cand != self.current:
+            self.current = cand
+        return self.current
 
 def main():
-    global last_gender_ts
-
     cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
-    # cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    # cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FPS, 30)
+    # Uncomment for even lower latency on many webcams:
+    # cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    # cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 580)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 320)
-    # Reduce capture latency (most backends ignore this, but cheap when supported)
-    cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    mp_pose = MPose(model_complexity=MODEL_COMPLEXITY)
+    smoother = BoneSmoother(beta=SMOOTH_BETA)
+    sender   = PoseSender(port=5056)
+    gate     = PersonGate(stable_frames=6, absent_timeout=0.6)
 
-    mp_pose = MPose()                          # no kwargs → matches your wrapper
-    smoother = BoneSmoother(beta=0.7)
-    sender = PoseSender(port=5056)
-    gc = GenderClassifier()                    # can swap backend inside for speed
-    gate = PersonGate(stable_frames=2, absent_timeout=0.5)  # faster enter/leave
+    g_worker = GenderWorker()
+    g_cons   = GenderConsensus()
 
-    frame_i = 0
-
+    print("[INFO] Streaming… press Q to quit")
     while True:
         ok, frame = cap.read()
-        if not ok:
-            continue
+        if not ok: continue
 
-        frame_i += 1
-
-        # Pose (fast) — must not block.
-        landmarks = mp_pose.process(frame)
-        detected = landmarks is not None
-
+        lms = mp_pose.process(frame)            # (33,4) or None
+        detected = lms is not None
         event = gate.step(detected)
 
-        # Start gender job when needed, but never block the loop
-        now = time.time()
-        should_kickoff = (
-            (event == "entered") or                 # on entry
-            (now - last_gender_ts >= GENDER_COOLDOWN_SEC)
-        )
-        if should_kickoff and not gender_busy.is_set():
-            gender_busy.set()
-            threading.Thread(target=gender_worker, args=(gc, frame.copy()), daemon=True).start()
-
-        # Use the latest available gender instantly
-        with gender_lock:
-            current_gender = gender_cache
-
         if detected:
-            bones = normalize_pose(landmarks)
+            # Non-blocking gender update
+            g_worker.maybe_kick(frame, lms, GENDER_INTERVAL_SEC)
+            current_gender = g_cons.update(g_worker.raw)
+
+            # Build/send bones (your existing mapping)
+            bones = normalize_pose(lms)
             bones = smoother.smooth_dict(bones)
             sender.send(current_gender, event, bones)
 
-            cv2.putText(frame, f"Gender: {current_gender}", (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 255, 0), 2)
+            # Debug overlay
+            cv2.putText(frame, f"Gender raw: {g_worker.raw}  ->  final: {current_gender}",
+                        (12, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
         else:
             if event == "left":
-                sender.send("unknown", event, {})
+                sender.send(g_cons.current, event, {})
 
-        cv2.imshow("Tracker - Press Q to quit", frame)
-        if (cv2.waitKey(1) & 0xFF) in (ord("q"), 27):
+        cv2.imshow("Tracker", frame)
+        if (cv2.waitKey(1) & 0xFF) in (ord('q'), 27):
             break
 
     cap.release()

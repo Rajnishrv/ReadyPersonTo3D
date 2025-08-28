@@ -1,3 +1,272 @@
+YourProject/
+├─ python-tracker/app/
+│  ├─ main.py
+│  ├─ mediapipe_pose.py
+│  ├─ feature_utils.py
+│  ├─ smoothing.py
+│  ├─ pose_sender.py
+│  ├─ person_gate.py
+│  ├─ gender.py          ← final (auto-downloads tiny CNN)
+│  ├─ gender_net.h5      ← optional offline model file
+│  ├─ global_vars.py
+│  └─ requirements.txt   ← pinned Python deps
+│
+└─ UnityProject/
+   └─ Assets/
+      ├─ Scripts/
+      │  ├─ Net/
+      │  │  └─ UdpPoseReceiver.cs       ← final
+      │  └─ Retarget/
+      │     ├─ RandomAvatarSpawner.cs   ← final
+      │     ├─ AvatarRetarget.cs
+      │     ├─ JointLowPass.cs
+      │     └─ PoseMapper.cs
+      └─ Resources/
+         └─ Avatars/
+            ├─ Male/     ← rigged Mixamo prefabs
+            └─ Female/   ← rigged Mixamo prefabs
+
+
+
+
+🐍 Python Setup
+1. Install Python
+
+Use Python 3.11.x (64-bit) (3.10 also works; avoid 3.12/3.13).
+
+2. Create environment
+cd python-tracker/app
+py -3.11 -m venv venv
+.\venv\Scripts\activate
+
+3. Install requirements
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+
+4. Run
+.\venv\Scripts\activate
+python main.py
+
+✅ Requirements (requirements.txt)
+numpy==1.26.4
+opencv-python==4.10.0.84
+mediapipe==0.10.14
+tensorflow==2.15.1
+
+Camera tips
+
+If webcam lags, enable MJPG:
+
+cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+
+Offline model
+
+If no internet on first run:
+
+Download the tiny CNN once:
+simple_CNN.81-0.96.hdf5
+
+Save it as gender_net.h5 next to gender.py.
+
+🎮 Unity Setup
+1. Prefabs
+
+Put at least one rigged Mixamo prefab in:
+
+Assets/Resources/Avatars/Male/
+Assets/Resources/Avatars/Female/
+
+
+Or disable useResources in RandomAvatarSpawner and drag prefabs into arrays.
+
+2. Scripts
+
+UdpPoseReceiver.cs
+
+Listens on UDP port 5056.
+
+Spawns avatars on "entered".
+
+Respawns when gender changes.
+
+RandomAvatarSpawner.cs
+
+Loads male/female prefab pools.
+
+Logs pool counts at Play.
+
+Applies pose bones each frame.
+
+PoseMapper.cs / AvatarRetarget.cs
+
+Handles bone mapping and smoothing.
+
+3. Unity version
+
+Unity 2021/2022/2023 LTS — no extra packages needed.
+
+4. Networking
+
+Same PC: Python sends to 127.0.0.1:5056.
+
+Different PCs: set host in Python (pose_sender.py or global_vars.py) to Unity machine’s IP.
+
+Allow inbound UDP 5056 in Windows Firewall.
+
+🔧 Validation Checklist
+
+On each laptop:
+
+Python
+
+pip install -r requirements.txt
+
+Run main.py → Webcam opens, pose draws, console prints FPS and "Gender: male/female".
+
+Unity
+
+Play → Console logs:
+[Spawner] Male prefabs: X | Female prefabs: Y
+
+Step into camera → avatar spawns.
+
+Arms/legs move correctly.
+
+Showing female face → avatar respawns from Female pool.
+
+📄 Optional helpers
+Start script
+
+start_python.bat (auto-create venv + run):
+
+@echo off
+cd /d "%~dp0"
+if not exist venv (
+  py -3.11 -m venv venv
+  call .\venv\Scripts\activate
+  python -m pip install --upgrade pip
+  pip install -r requirements.txt
+) else (
+  call .\venv\Scripts\activate
+)
+python main.py
+
+Freeze exact versions
+
+After install:
+
+pip freeze > requirements.lock.txt
+
+
+Use requirements.lock.txt to replicate exact same environment:
+
+pip install -r requirements.lock.txt
+
+✅ Known Good Versions
+
+Python: 3.11.x (64-bit)
+
+numpy: 1.26.4
+
+opencv-python: 4.10.0.84
+
+mediapipe: 0.10.14
+
+tensorflow (CPU): 2.15.1
+
+✨ Credits
+
+MediaPipe
+ for real-time pose.
+
+oarriaga/face_classification
+ tiny gender CNN.
+
+Mixamo
+ characters for Unity retarget.
+
+👉 Do you want me to also bundle this README with a ready-made requirements.lock.txt generated from your working laptop, so other machines will get the exact same package builds?
+
+You said:
+yes
+ChatGPT said:
+
+Perfect 👍
+
+Here’s how you can add a requirements.lock.txt alongside the README.md. This ensures every laptop installs the exact same builds (not just version ranges).
+
+✅ How to generate requirements.lock.txt
+
+On your working laptop (where everything is already running fine):
+
+cd python-tracker/app
+.\venv\Scripts\activate
+pip freeze > requirements.lock.txt
+
+
+This will output something like:
+
+absl-py==2.1.0
+attrs==23.2.0
+flatbuffers==24.3.25
+keras==2.15.0
+mediapipe==0.10.14
+numpy==1.26.4
+opencv-python==4.10.0.84
+protobuf==4.25.3
+scipy==1.13.1
+tensorflow==2.15.1
+tensorflow-intel==2.15.1
+wrapt==1.16.0
+
+
+(The exact list will depend on what TensorFlow pulled in on your machine — that’s why we freeze it to lock it down.)
+
+✅ How to use on a new laptop
+
+Copy the whole project folder, including:
+
+requirements.txt
+
+requirements.lock.txt
+
+gender_net.h5 (if offline)
+
+On the new laptop:
+
+cd python-tracker/app
+py -3.11 -m venv venv
+.\venv\Scripts\activate
+pip install --upgrade pip
+pip install -r requirements.lock.txt
+
+
+That installs the exact same builds as your working environment.
+
+✅ Update README.md
+
+Add this section (already drafted for you):
+
+### Freeze exact versions
+On your main machine:
+```bash
+pip freeze > requirements.lock.txt
+
+
+Then on new machines:
+
+pip install -r requirements.lock.txt
+
+
+This guarantees an identical Python environment across all laptops.
+
+
+---
+
+👉 Do you want me to **merge the `requirements.lock.txt` section directly into the README.md** I wrote
+
+
 ReadyPersonTo3D — Integrated project (Python tracker + Unity skeleton)
 ================================================================
 
